@@ -1,5 +1,6 @@
 package com.termux.terminal;
 
+import android.view.KeyEvent;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -60,6 +61,109 @@ public final class KeyHandler {
     public static final int KEYMOD_CTRL = 0x40000000;
     public static final int KEYMOD_SHIFT = 0x20000000;
     public static final int KEYMOD_NUM_LOCK = 0x10000000;
+    public static final int KEYMOD_SUPER = 0x08000000;
+    public static final int KEYMOD_CAPS_LOCK = 0x04000000;
+    private static final int[] KITTY_KEYPAD_NAVIGATION = {
+        57425, 57424, 57420, 57422, 57417, 57427, 57418, 57423, 57419, 57421
+    };
+
+    /** Encode a non-text key in negotiated kitty disambiguation mode, or return null for text. */
+    public static String getKittyCode(int keyCode, int keyMode) {
+        int codePoint;
+        char suffix = 'u';
+        boolean numLock = (keyMode & KEYMOD_NUM_LOCK) != 0;
+        if (keyCode >= KEYCODE_NUMPAD_0 && keyCode <= KEYCODE_NUMPAD_9) {
+            if (numLock) {
+                codePoint = 57399 + keyCode - KEYCODE_NUMPAD_0;
+            } else {
+                // Insert, End, Down, Page Down, Left, Begin, Right, Home, Up, Page Up.
+                codePoint = KITTY_KEYPAD_NAVIGATION[keyCode - KEYCODE_NUMPAD_0];
+            }
+            return codePoint == 57427 ? kittySequence(1, keyMode, 'E') : kittySequence(codePoint, keyMode, 'u');
+        }
+        switch (keyCode) {
+            case KEYCODE_ESCAPE:
+            case KEYCODE_BACK: codePoint = 27; break;
+            case KEYCODE_ENTER:
+            case KEYCODE_DPAD_CENTER: codePoint = 13; break;
+            case KEYCODE_TAB: codePoint = 9; break;
+            case KEYCODE_DEL: codePoint = 127; break;
+            // Printable keys, including Space, must first be resolved through the Android layout.
+            // AltGr+Space may produce a different character instead of an Alt shortcut.
+            case KEYCODE_SPACE: return null;
+            case KEYCODE_DPAD_UP: suffix = 'A'; codePoint = 1; break;
+            case KEYCODE_DPAD_DOWN: suffix = 'B'; codePoint = 1; break;
+            case KEYCODE_DPAD_RIGHT: suffix = 'C'; codePoint = 1; break;
+            case KEYCODE_DPAD_LEFT: suffix = 'D'; codePoint = 1; break;
+            case KEYCODE_MOVE_HOME: suffix = 'H'; codePoint = 1; break;
+            case KEYCODE_MOVE_END: suffix = 'F'; codePoint = 1; break;
+            case KEYCODE_INSERT: suffix = '~'; codePoint = 2; break;
+            case KEYCODE_FORWARD_DEL: suffix = '~'; codePoint = 3; break;
+            case KEYCODE_PAGE_UP: suffix = '~'; codePoint = 5; break;
+            case KEYCODE_PAGE_DOWN: suffix = '~'; codePoint = 6; break;
+            case KEYCODE_F1: suffix = 'P'; codePoint = 1; break;
+            case KEYCODE_F2: suffix = 'Q'; codePoint = 1; break;
+            // CSI R overlaps with cursor position reports; kitty uses CSI 13 ~ for F3.
+            case KEYCODE_F3: suffix = '~'; codePoint = 13; break;
+            case KEYCODE_F4: suffix = 'S'; codePoint = 1; break;
+            case KEYCODE_F5: suffix = '~'; codePoint = 15; break;
+            case KEYCODE_F6: suffix = '~'; codePoint = 17; break;
+            case KEYCODE_F7: suffix = '~'; codePoint = 18; break;
+            case KEYCODE_F8: suffix = '~'; codePoint = 19; break;
+            case KEYCODE_F9: suffix = '~'; codePoint = 20; break;
+            case KEYCODE_F10: suffix = '~'; codePoint = 21; break;
+            case KEYCODE_F11: suffix = '~'; codePoint = 23; break;
+            case KEYCODE_F12: suffix = '~'; codePoint = 24; break;
+            case KEYCODE_NUMPAD_DOT: codePoint = numLock ? 57409 : 57426; break;
+            case KEYCODE_NUMPAD_DIVIDE: codePoint = 57410; break;
+            case KEYCODE_NUMPAD_MULTIPLY: codePoint = 57411; break;
+            case KEYCODE_NUMPAD_SUBTRACT: codePoint = 57412; break;
+            case KEYCODE_NUMPAD_ADD: codePoint = 57413; break;
+            case KEYCODE_NUMPAD_ENTER: codePoint = 57414; break;
+            case KEYCODE_NUMPAD_EQUALS: codePoint = 57415; break;
+            case KEYCODE_NUMPAD_COMMA: codePoint = 57416; break;
+            case KeyEvent.KEYCODE_CAPS_LOCK: codePoint = 57358; break;
+            case KeyEvent.KEYCODE_SCROLL_LOCK: codePoint = 57359; break;
+            case KEYCODE_NUM_LOCK: codePoint = 57360; break;
+            case KEYCODE_SYSRQ: codePoint = 57361; break;
+            case KEYCODE_BREAK: codePoint = 57362; break;
+            default: return null;
+        }
+        int ordinaryModifiers = keyMode & (KEYMOD_SHIFT | KEYMOD_ALT | KEYMOD_CTRL | KEYMOD_SUPER);
+        if (ordinaryModifiers == 0 && suffix == 'u') {
+            // Preserve the recovery keys even when Caps Lock or Num Lock is on.
+            if (codePoint == 13) return "\r";
+            if (codePoint == 9) return "\t";
+            if (codePoint == 127) return "\u007f";
+        }
+        return kittySequence(codePoint, keyMode, suffix);
+    }
+
+    /** Plain and Shift-only text stays UTF-8; shortcut keys use the unshifted code point. */
+    public static String getKittyCodePoint(int unshiftedCodePoint, int keyMode) {
+        if (unshiftedCodePoint < 32 || !Character.isValidCodePoint(unshiftedCodePoint)) return null;
+        if ((keyMode & (KEYMOD_ALT | KEYMOD_CTRL | KEYMOD_SUPER)) == 0) return null;
+        return kittySequence(unshiftedCodePoint, keyMode & ~(KEYMOD_NUM_LOCK | KEYMOD_CAPS_LOCK), 'u');
+    }
+
+    private static String kittySequence(int number, int keyMode, char suffix) {
+        int modifiers = 1;
+        if ((keyMode & KEYMOD_SHIFT) != 0) modifiers += 1;
+        if ((keyMode & KEYMOD_ALT) != 0) modifiers += 2;
+        if ((keyMode & KEYMOD_CTRL) != 0) modifiers += 4;
+        if ((keyMode & KEYMOD_SUPER) != 0) modifiers += 8;
+        if ((keyMode & KEYMOD_CAPS_LOCK) != 0) modifiers += 64;
+        if ((keyMode & KEYMOD_NUM_LOCK) != 0) modifiers += 128;
+        String prefix = number == 1 && suffix != 'u' && suffix != '~' && modifiers == 1 ? "" : Integer.toString(number);
+        return "\033[" + prefix + (modifiers == 1 ? "" : ";" + modifiers) + suffix;
+    }
+
+    /** Select negotiated or legacy functional-key encoding. Null leaves layout text to the caller. */
+    public static String getCode(int keyCode, int keyMode, boolean cursorApp, boolean keypadApplication,
+                                 boolean kittyKeyboard) {
+        return kittyKeyboard ? getKittyCode(keyCode, keyMode) :
+            getCode(keyCode, keyMode, cursorApp, keypadApplication);
+    }
 
     private static final Map<String, Integer> TERMCAP_TO_KEYCODE = new HashMap<>();
 

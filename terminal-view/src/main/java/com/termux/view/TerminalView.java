@@ -798,6 +798,10 @@ public final class TerminalView extends View {
         if (event.isAltPressed() || leftAltDown) keyMod |= KeyHandler.KEYMOD_ALT;
         if (shiftDown) keyMod |= KeyHandler.KEYMOD_SHIFT;
         if (event.isNumLockOn()) keyMod |= KeyHandler.KEYMOD_NUM_LOCK;
+        if (mEmulator.isKittyKeyboardEnabled()) {
+            if (event.isMetaPressed()) keyMod |= KeyHandler.KEYMOD_SUPER;
+            if (event.isCapsLockOn()) keyMod |= KeyHandler.KEYMOD_CAPS_LOCK;
+        }
         // https://github.com/termux/termux-app/issues/731
         if (!event.isFunctionPressed() && handleKeyCode(keyCode, keyMod)) {
             if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "handleKeyCode() took key event");
@@ -806,6 +810,7 @@ public final class TerminalView extends View {
 
         // Clear Ctrl since we handle that ourselves:
         int bitsToClear = KeyEvent.META_CTRL_MASK;
+        if (mEmulator.isKittyKeyboardEnabled()) bitsToClear |= KeyEvent.META_META_MASK;
         if (rightAltDownFromEvent) {
             // Let right Alt/Alt Gr be used to compose characters.
         } else {
@@ -836,7 +841,15 @@ public final class TerminalView extends View {
                 if (combinedChar > 0) result = combinedChar;
                 mCombiningAccent = 0;
             }
-            inputCodePoint(event.getDeviceId(), result, controlDown, leftAltDown);
+            // Keep the layout's unshifted key before legacy Ctrl mapping destroys its identity.
+            int unshiftedMetaState = effectiveMetaState & ~(KeyEvent.META_SHIFT_MASK | KeyEvent.META_CAPS_LOCK_ON);
+            int unshiftedCodePoint = event.getUnicodeChar(unshiftedMetaState);
+            if (oldCombiningAccent != 0 || unshiftedCodePoint <= 0 || (unshiftedCodePoint & KeyCharacterMap.COMBINING_ACCENT) != 0)
+                unshiftedCodePoint = Character.toLowerCase(result);
+            int textKeyMod = keyMod;
+            // Right Alt is used by the keyboard layout (AltGr), rather than a terminal Alt shortcut.
+            if (rightAltDownFromEvent && !leftAltDown) textKeyMod &= ~KeyHandler.KEYMOD_ALT;
+            inputCodePoint(event.getDeviceId(), result, controlDown, leftAltDown, unshiftedCodePoint, textKeyMod);
         }
 
         if (mCombiningAccent != oldCombiningAccent) invalidate();
@@ -845,6 +858,12 @@ public final class TerminalView extends View {
     }
 
     public void inputCodePoint(int eventSource, int codePoint, boolean controlDownFromEvent, boolean leftAltDownFromEvent) {
+        inputCodePoint(eventSource, codePoint, controlDownFromEvent, leftAltDownFromEvent,
+            Character.toLowerCase(codePoint), 0);
+    }
+
+    private void inputCodePoint(int eventSource, int codePoint, boolean controlDownFromEvent,
+                               boolean leftAltDownFromEvent, int unshiftedCodePoint, int keyMod) {
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
             mClient.logInfo(LOG_TAG, "inputCodePoint(eventSource=" + eventSource + ", codePoint=" + codePoint + ", controlDownFromEvent=" + controlDownFromEvent + ", leftAltDownFromEvent="
                 + leftAltDownFromEvent + ")");
@@ -860,6 +879,17 @@ public final class TerminalView extends View {
         final boolean altDown = leftAltDownFromEvent || mClient.readAltKey();
 
         if (mClient.onCodePoint(codePoint, controlDown, mTermSession)) return;
+
+        if (mEmulator != null && mEmulator.isKittyKeyboardEnabled()) {
+            if (controlDown) keyMod |= KeyHandler.KEYMOD_CTRL;
+            if (altDown) keyMod |= KeyHandler.KEYMOD_ALT;
+            if (mClient.readShiftKey()) keyMod |= KeyHandler.KEYMOD_SHIFT;
+            String kittyCode = KeyHandler.getKittyCodePoint(unshiftedCodePoint, keyMod);
+            if (kittyCode != null) {
+                mTermSession.write(kittyCode);
+                return;
+            }
+        }
 
         if (controlDown) {
             if (codePoint >= 'a' && codePoint <= 'z') {
@@ -919,7 +949,8 @@ public final class TerminalView extends View {
             return true;
 
         TerminalEmulator term = mTermSession.getEmulator();
-        String code = KeyHandler.getCode(keyCode, keyMod, term.isCursorKeysApplicationMode(), term.isKeypadApplicationMode());
+        String code = KeyHandler.getCode(keyCode, keyMod, term.isCursorKeysApplicationMode(),
+            term.isKeypadApplicationMode(), term.isKittyKeyboardEnabled());
         if (code == null) return false;
         mTermSession.write(code);
         return true;
