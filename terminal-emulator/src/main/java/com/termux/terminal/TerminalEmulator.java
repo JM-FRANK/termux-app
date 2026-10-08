@@ -46,6 +46,15 @@ public final class TerminalEmulator {
         return kittyKeyboardState().getFlags() != 0;
     }
 
+    public int getKittyKeyboardFlags() {
+        return kittyKeyboardState().getFlags();
+    }
+
+    /** Changes whenever the active keyboard mode is updated, including reset and stack operations. */
+    public long getKittyKeyboardGeneration() {
+        return kittyKeyboardState().getGeneration();
+    }
+
     public static final int MOUSE_LEFT_BUTTON = 0;
 
     /** Mouse moving while having left mouse button pressed. */
@@ -1891,7 +1900,9 @@ public final class TerminalEmulator {
                 if (newScreen != mScreen) {
                     boolean resized = !(newScreen.mColumns == mColumns && newScreen.mScreenRows == mRows);
                     if (setting) saveCursor();
+                    kittyKeyboardState().invalidateEvents();
                     mScreen = newScreen;
+                    kittyKeyboardState().invalidateEvents();
                     if (!setting) {
                         int col = mSavedStateMain.mSavedCursorCol;
                         int row = mSavedStateMain.mSavedCursorRow;

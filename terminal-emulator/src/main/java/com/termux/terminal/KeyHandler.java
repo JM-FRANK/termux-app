@@ -57,18 +57,33 @@ import static android.view.KeyEvent.KEYCODE_TAB;
 
 public final class KeyHandler {
 
+    public static final int KITTY_DISAMBIGUATE = 1;
+    public static final int KITTY_REPORT_EVENTS = 2;
+    public static final int KEY_EVENT_PRESS = 1;
+    public static final int KEY_EVENT_REPEAT = 2;
+    public static final int KEY_EVENT_RELEASE = 3;
+
     public static final int KEYMOD_ALT = 0x80000000;
     public static final int KEYMOD_CTRL = 0x40000000;
     public static final int KEYMOD_SHIFT = 0x20000000;
     public static final int KEYMOD_NUM_LOCK = 0x10000000;
     public static final int KEYMOD_SUPER = 0x08000000;
     public static final int KEYMOD_CAPS_LOCK = 0x04000000;
+    private static final int[] KEYPAD_NAVIGATION_KEYS = {
+        KEYCODE_INSERT, KEYCODE_MOVE_END, KEYCODE_DPAD_DOWN, KEYCODE_PAGE_DOWN, KEYCODE_DPAD_LEFT,
+        KEYCODE_NUMPAD_5, KEYCODE_DPAD_RIGHT, KEYCODE_MOVE_HOME, KEYCODE_DPAD_UP, KEYCODE_PAGE_UP
+    };
     private static final int[] KITTY_KEYPAD_NAVIGATION = {
         57425, 57424, 57420, 57422, 57417, 57427, 57418, 57423, 57419, 57421
     };
 
     /** Encode a non-text key in negotiated kitty disambiguation mode, or return null for text. */
     public static String getKittyCode(int keyCode, int keyMode) {
+        return getKittyCode(keyCode, keyMode, KEY_EVENT_PRESS);
+    }
+
+    private static String getKittyCode(int keyCode, int keyMode, int eventType) {
+        if (eventType == KEY_EVENT_RELEASE && isKittyRecoveryKey(keyCode)) return null;
         int codePoint;
         char suffix = 'u';
         boolean numLock = (keyMode & KEYMOD_NUM_LOCK) != 0;
@@ -79,7 +94,7 @@ public final class KeyHandler {
                 // Insert, End, Down, Page Down, Left, Begin, Right, Home, Up, Page Up.
                 codePoint = KITTY_KEYPAD_NAVIGATION[keyCode - KEYCODE_NUMPAD_0];
             }
-            return codePoint == 57427 ? kittySequence(1, keyMode, 'E') : kittySequence(codePoint, keyMode, 'u');
+            return codePoint == 57427 ? kittySequence(1, keyMode, 'E', eventType) : kittySequence(codePoint, keyMode, 'u', eventType);
         }
         switch (keyCode) {
             case KEYCODE_ESCAPE:
@@ -136,7 +151,7 @@ public final class KeyHandler {
             if (codePoint == 9) return "\t";
             if (codePoint == 127) return "\u007f";
         }
-        return kittySequence(codePoint, keyMode, suffix);
+        return kittySequence(codePoint, keyMode, suffix, eventType);
     }
 
     /** Plain and Shift-only text stays UTF-8; shortcut keys use the unshifted code point. */
@@ -146,7 +161,33 @@ public final class KeyHandler {
         return kittySequence(unshiftedCodePoint, keyMode & ~(KEYMOD_NUM_LOCK | KEYMOD_CAPS_LOCK), 'u');
     }
 
+    /** Recovery control keys deliberately have no release events without report-all-keys support. */
+    public static boolean isKittyRecoveryKey(int keyCode) {
+        return keyCode == KEYCODE_ENTER || keyCode == KEYCODE_DPAD_CENTER ||
+            keyCode == KEYCODE_TAB || keyCode == KEYCODE_DEL;
+    }
+
+    public static String getKittyCodePoint(int unshiftedCodePoint, int keyMode, int flags, int eventType) {
+        if ((flags & KITTY_REPORT_EVENTS) == 0) eventType = KEY_EVENT_PRESS;
+        if ((flags & KITTY_DISAMBIGUATE) == 0 && eventType == KEY_EVENT_PRESS) return null;
+        if (unshiftedCodePoint < 32 || !Character.isValidCodePoint(unshiftedCodePoint)) return null;
+        if (eventType != KEY_EVENT_RELEASE && getKittyCodePoint(unshiftedCodePoint, keyMode) == null) return null;
+        return kittySequence(unshiftedCodePoint,
+            keyMode & ~(KEYMOD_NUM_LOCK | KEYMOD_CAPS_LOCK), 'u', eventType);
+    }
+
+    /** Reuse a previously encoded functional identity with the release event's current modifiers. */
+    public static String getKittyReleaseCode(String releaseCode, int keyMode) {
+        int separator = releaseCode.indexOf(';');
+        int number = Integer.parseInt(releaseCode.substring(2, separator));
+        return kittySequence(number, keyMode, releaseCode.charAt(releaseCode.length() - 1), KEY_EVENT_RELEASE);
+    }
+
     private static String kittySequence(int number, int keyMode, char suffix) {
+        return kittySequence(number, keyMode, suffix, KEY_EVENT_PRESS);
+    }
+
+    private static String kittySequence(int number, int keyMode, char suffix, int eventType) {
         int modifiers = 1;
         if ((keyMode & KEYMOD_SHIFT) != 0) modifiers += 1;
         if ((keyMode & KEYMOD_ALT) != 0) modifiers += 2;
@@ -154,8 +195,9 @@ public final class KeyHandler {
         if ((keyMode & KEYMOD_SUPER) != 0) modifiers += 8;
         if ((keyMode & KEYMOD_CAPS_LOCK) != 0) modifiers += 64;
         if ((keyMode & KEYMOD_NUM_LOCK) != 0) modifiers += 128;
-        String prefix = number == 1 && suffix != 'u' && suffix != '~' && modifiers == 1 ? "" : Integer.toString(number);
-        return "\033[" + prefix + (modifiers == 1 ? "" : ";" + modifiers) + suffix;
+        String prefix = number == 1 && suffix != 'u' && suffix != '~' && modifiers == 1 && eventType == KEY_EVENT_PRESS ? "" : Integer.toString(number);
+        return "\033[" + prefix + (modifiers == 1 && eventType == KEY_EVENT_PRESS ? "" : ";" + modifiers) +
+            (eventType == KEY_EVENT_PRESS ? "" : ":" + eventType) + suffix;
     }
 
     /** Select negotiated or legacy functional-key encoding. Null leaves layout text to the caller. */
@@ -163,6 +205,36 @@ public final class KeyHandler {
                                  boolean kittyKeyboard) {
         return kittyKeyboard ? getKittyCode(keyCode, keyMode) :
             getCode(keyCode, keyMode, cursorApp, keypadApplication);
+    }
+
+    /** Event reporting is independent of disambiguation; text-producing legacy keypad keys stay text. */
+    public static String getCode(int keyCode, int keyMode, boolean cursorApp, boolean keypadApplication,
+                                 int flags, int eventType) {
+        if ((flags & KITTY_REPORT_EVENTS) == 0) {
+            if (eventType == KEY_EVENT_RELEASE) return null;
+            return getCode(keyCode, keyMode, cursorApp, keypadApplication,
+                (flags & KITTY_DISAMBIGUATE) != 0);
+        }
+        if ((flags & KITTY_DISAMBIGUATE) == 0) {
+            String legacy = getCode(keyCode, keyMode, cursorApp, keypadApplication);
+            if (isKittyRecoveryKey(keyCode)) {
+                if (eventType == KEY_EVENT_RELEASE) return null;
+                // Keep legacy presses and plain recovery repeats, but report modified repeats.
+                return eventType == KEY_EVENT_REPEAT ? getKittyCode(keyCode, keyMode, eventType) : legacy;
+            }
+            if ((keyCode == KEYCODE_ESCAPE || keyCode == KEYCODE_BACK) && eventType == KEY_EVENT_PRESS)
+                return legacy;
+            if (keyCode >= KEYCODE_NUMPAD_0 && keyCode <= KEYCODE_NUMPAD_9) {
+                if ((keyMode & KEYMOD_NUM_LOCK) != 0 || keyCode == KEYCODE_NUMPAD_5)
+                    return eventType == KEY_EVENT_RELEASE ? null : legacy;
+                keyCode = KEYPAD_NAVIGATION_KEYS[keyCode - KEYCODE_NUMPAD_0];
+            } else if (keyCode == KEYCODE_NUMPAD_DOT && (keyMode & KEYMOD_NUM_LOCK) == 0) {
+                keyCode = KEYCODE_FORWARD_DEL;
+            } else if (keyCode >= KEYCODE_NUMPAD_DIVIDE && keyCode <= KeyEvent.KEYCODE_NUMPAD_RIGHT_PAREN) {
+                return eventType == KEY_EVENT_RELEASE ? null : legacy;
+            }
+        }
+        return getKittyCode(keyCode, keyMode, eventType);
     }
 
     private static final Map<String, Integer> TERMCAP_TO_KEYCODE = new HashMap<>();

@@ -455,11 +455,12 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             if (resultingKeyCode != -1) {
                 TerminalEmulator term = session.getEmulator();
                 session.write(KeyHandler.getCode(resultingKeyCode, 0, term.isCursorKeysApplicationMode(),
-                    term.isKeypadApplicationMode(), term.isKittyKeyboardEnabled()));
+                    term.isKeypadApplicationMode(), term.getKittyKeyboardFlags(), KeyHandler.KEY_EVENT_PRESS));
             } else if (resultingCodePoint != -1) {
                 String code = null;
                 if (session.getEmulator().isKittyKeyboardEnabled()) {
-                    code = KeyHandler.getKittyCodePoint(resultingCodePoint, altDown ? KeyHandler.KEYMOD_ALT : 0);
+                    code = KeyHandler.getKittyCodePoint(resultingCodePoint, altDown ? KeyHandler.KEYMOD_ALT : 0,
+                        session.getEmulator().getKittyKeyboardFlags(), KeyHandler.KEY_EVENT_PRESS);
                 }
                 if (code != null) session.write(code);
                 else session.writeCodePoint(altDown, resultingCodePoint);
