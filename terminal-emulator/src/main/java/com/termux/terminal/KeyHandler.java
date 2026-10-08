@@ -59,6 +59,7 @@ public final class KeyHandler {
 
     public static final int KITTY_DISAMBIGUATE = 1;
     public static final int KITTY_REPORT_EVENTS = 2;
+    public static final int KITTY_REPORT_ALTERNATE_KEYS = 4;
     public static final int KEY_EVENT_PRESS = 1;
     public static final int KEY_EVENT_REPEAT = 2;
     public static final int KEY_EVENT_RELEASE = 3;
@@ -154,6 +155,47 @@ public final class KeyHandler {
         return kittySequence(codePoint, keyMode, suffix, eventType);
     }
 
+    /** Immutable layout identity, also retained across repeats for a matching release. */
+    public static final class KittyKey {
+        public final int codePoint;
+        public final int shiftedCodePoint;
+        public final int baseLayoutCodePoint;
+
+        public KittyKey(int codePoint, int shiftedCodePoint, int baseLayoutCodePoint) {
+            this.codePoint = codePoint;
+            this.shiftedCodePoint = validAlternate(shiftedCodePoint, codePoint);
+            this.baseLayoutCodePoint = validAlternate(baseLayoutCodePoint, codePoint);
+        }
+
+        private static int validAlternate(int alternate, int primary) {
+            return alternate >= 32 && Character.isValidCodePoint(alternate) &&
+                !(alternate >= 0xD800 && alternate <= 0xDFFF) && alternate != primary ? alternate : 0;
+        }
+    }
+
+    /** Known standard PC-101 positions from Android key codes; unknown or extended keys are omitted. */
+    public static int getKittyBaseLayoutCodePoint(int keyCode) {
+        if (keyCode >= KeyEvent.KEYCODE_A && keyCode <= KeyEvent.KEYCODE_Z)
+            return 'a' + keyCode - KeyEvent.KEYCODE_A;
+        if (keyCode >= KeyEvent.KEYCODE_0 && keyCode <= KeyEvent.KEYCODE_9)
+            return '0' + keyCode - KeyEvent.KEYCODE_0;
+        switch (keyCode) {
+            case KEYCODE_SPACE: return ' ';
+            case KeyEvent.KEYCODE_GRAVE: return '`';
+            case KeyEvent.KEYCODE_MINUS: return '-';
+            case KeyEvent.KEYCODE_EQUALS: return '=';
+            case KeyEvent.KEYCODE_LEFT_BRACKET: return '[';
+            case KeyEvent.KEYCODE_RIGHT_BRACKET: return ']';
+            case KeyEvent.KEYCODE_BACKSLASH: return '\\';
+            case KeyEvent.KEYCODE_SEMICOLON: return ';';
+            case KeyEvent.KEYCODE_APOSTROPHE: return '\'';
+            case KeyEvent.KEYCODE_COMMA: return ',';
+            case KeyEvent.KEYCODE_PERIOD: return '.';
+            case KeyEvent.KEYCODE_SLASH: return '/';
+            default: return 0;
+        }
+    }
+
     /** Plain and Shift-only text stays UTF-8; shortcut keys use the unshifted code point. */
     public static String getKittyCodePoint(int unshiftedCodePoint, int keyMode) {
         if (unshiftedCodePoint < 32 || !Character.isValidCodePoint(unshiftedCodePoint)) return null;
@@ -168,12 +210,26 @@ public final class KeyHandler {
     }
 
     public static String getKittyCodePoint(int unshiftedCodePoint, int keyMode, int flags, int eventType) {
-        if ((flags & KITTY_REPORT_EVENTS) == 0) eventType = KEY_EVENT_PRESS;
+        return getKittyCodePoint(new KittyKey(unshiftedCodePoint, 0, 0), keyMode, flags, eventType);
+    }
+
+    /** Alternate reporting enhances an encoded event without turning layout text into an escape code. */
+    public static String getKittyCodePoint(KittyKey key, int keyMode, int flags, int eventType) {
+        if ((flags & KITTY_REPORT_EVENTS) == 0) {
+            if (eventType == KEY_EVENT_RELEASE) return null;
+            eventType = KEY_EVENT_PRESS;
+        }
         if ((flags & KITTY_DISAMBIGUATE) == 0 && eventType == KEY_EVENT_PRESS) return null;
-        if (unshiftedCodePoint < 32 || !Character.isValidCodePoint(unshiftedCodePoint)) return null;
-        if (eventType != KEY_EVENT_RELEASE && getKittyCodePoint(unshiftedCodePoint, keyMode) == null) return null;
-        return kittySequence(unshiftedCodePoint,
-            keyMode & ~(KEYMOD_NUM_LOCK | KEYMOD_CAPS_LOCK), 'u', eventType);
+        if (key.codePoint < 32 || !Character.isValidCodePoint(key.codePoint)) return null;
+        if (eventType != KEY_EVENT_RELEASE && getKittyCodePoint(key.codePoint, keyMode) == null) return null;
+        String number = Integer.toString(key.codePoint);
+        if ((flags & KITTY_REPORT_ALTERNATE_KEYS) != 0) {
+            int shifted = (keyMode & KEYMOD_SHIFT) != 0 ? key.shiftedCodePoint : 0;
+            if (shifted != 0 || key.baseLayoutCodePoint != 0)
+                number += ":" + (shifted == 0 ? "" : shifted) +
+                    (key.baseLayoutCodePoint == 0 ? "" : ":" + key.baseLayoutCodePoint);
+        }
+        return kittySequence(number, keyMode & ~(KEYMOD_NUM_LOCK | KEYMOD_CAPS_LOCK), 'u', eventType);
     }
 
     /** Reuse a previously encoded functional identity with the release event's current modifiers. */
@@ -188,6 +244,10 @@ public final class KeyHandler {
     }
 
     private static String kittySequence(int number, int keyMode, char suffix, int eventType) {
+        return kittySequence(Integer.toString(number), keyMode, suffix, eventType);
+    }
+
+    private static String kittySequence(String number, int keyMode, char suffix, int eventType) {
         int modifiers = 1;
         if ((keyMode & KEYMOD_SHIFT) != 0) modifiers += 1;
         if ((keyMode & KEYMOD_ALT) != 0) modifiers += 2;
@@ -195,7 +255,8 @@ public final class KeyHandler {
         if ((keyMode & KEYMOD_SUPER) != 0) modifiers += 8;
         if ((keyMode & KEYMOD_CAPS_LOCK) != 0) modifiers += 64;
         if ((keyMode & KEYMOD_NUM_LOCK) != 0) modifiers += 128;
-        String prefix = number == 1 && suffix != 'u' && suffix != '~' && modifiers == 1 && eventType == KEY_EVENT_PRESS ? "" : Integer.toString(number);
+        String prefix = number.equals("1") && suffix != 'u' && suffix != '~' &&
+            modifiers == 1 && eventType == KEY_EVENT_PRESS ? "" : number;
         return "\033[" + prefix + (modifiers == 1 && eventType == KEY_EVENT_PRESS ? "" : ";" + modifiers) +
             (eventType == KEY_EVENT_PRESS ? "" : ":" + eventType) + suffix;
     }

@@ -1,6 +1,6 @@
 package com.termux.terminal;
 
-/** Per-screen progressive keyboard flags. Supports disambiguation and event reporting. */
+/** Per-screen progressive keyboard flags. Supports disambiguation, event and alternate-key reporting. */
 final class KittyKeyboardState {
     // The current flags occupy one entry; reserve at most 31 saved entries.
     private static final int MAX_DEPTH = 31;
@@ -22,7 +22,8 @@ final class KittyKeyboardState {
     }
 
     void set(int flags, int mode) {
-        flags &= KeyHandler.KITTY_DISAMBIGUATE | KeyHandler.KITTY_REPORT_EVENTS;
+        flags &= KeyHandler.KITTY_DISAMBIGUATE | KeyHandler.KITTY_REPORT_EVENTS |
+            KeyHandler.KITTY_REPORT_ALTERNATE_KEYS;
         if (mode >= 1 && mode <= 3) mGeneration++;
         switch (mode) {
             case 1: mFlags = flags; break;

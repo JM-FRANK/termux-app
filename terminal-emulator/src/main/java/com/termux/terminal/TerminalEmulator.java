@@ -42,8 +42,9 @@ public final class TerminalEmulator {
         return mScreen == mAltBuffer ? mKittyKeyboardAlt : mKittyKeyboardMain;
     }
 
+    /** Whether an enhancement changes key encoding; alternate reporting alone keeps legacy input. */
     public boolean isKittyKeyboardEnabled() {
-        return kittyKeyboardState().getFlags() != 0;
+        return (getKittyKeyboardFlags() & (KeyHandler.KITTY_DISAMBIGUATE | KeyHandler.KITTY_REPORT_EVENTS)) != 0;
     }
 
     public int getKittyKeyboardFlags() {

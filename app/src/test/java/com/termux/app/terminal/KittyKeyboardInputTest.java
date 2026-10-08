@@ -438,4 +438,135 @@ public class KittyKeyboardInputTest {
         }
     }
 
+    /** Robolectric 4.10 omits Shift+=; provide the US layout entry explicitly. */
+    @Implements(KeyCharacterMap.class)
+    public static class PunctuationCharacterMap extends ShadowKeyCharacterMap {
+        @Override
+        @Implementation
+        protected int get(int keyCode, int metaState) {
+            if (keyCode == KeyEvent.KEYCODE_EQUALS)
+                return (metaState & KeyEvent.META_SHIFT_ON) != 0 ? '+' : '=';
+            return super.get(keyCode, metaState);
+        }
+    }
+
+    @Test
+    @Config(shadows = PunctuationCharacterMap.class)
+    public void alternateShiftedShortcutsUseTheAndroidLayout() throws Exception {
+        enter("\033[>7u");
+        int modifiers = KeyEvent.META_CTRL_ON | KeyEvent.META_SHIFT_ON;
+        press(KeyEvent.KEYCODE_EQUALS, modifiers, "\033[61:43;6u");
+        repeat(KeyEvent.KEYCODE_EQUALS, modifiers, "\033[61:43;6:2u");
+        release(KeyEvent.KEYCODE_EQUALS, modifiers, "\033[61:43;6:3u");
+        press(KeyEvent.KEYCODE_A, modifiers, "\033[97:65;6u");
+        release(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON, "\033[97;5:3u");
+        press(KeyEvent.KEYCODE_A, 0, "a");
+        release(KeyEvent.KEYCODE_A, 0, "");
+        press(KeyEvent.KEYCODE_A, KeyEvent.META_SHIFT_ON, "A");
+        release(KeyEvent.KEYCODE_A, KeyEvent.META_SHIFT_ON, "");
+    }
+
+    /** Synthetic non-Latin layout, including a Meta mapping to check alternate-only legacy isolation. */
+    @Implements(KeyCharacterMap.class)
+    public static class AlternateCharacterMap extends ShadowKeyCharacterMap {
+        static boolean greek;
+        @Override
+        @Implementation
+        protected int get(int keyCode, int metaState) {
+            if (keyCode == KeyEvent.KEYCODE_D)
+                return (metaState & KeyEvent.META_SHIFT_ON) != 0 ? '!' : 'a';
+            if (keyCode == KeyEvent.KEYCODE_C) {
+                if ((metaState & KeyEvent.META_META_ON) != 0) return 0x03BB;
+                boolean shift = (metaState & KeyEvent.META_SHIFT_ON) != 0;
+                return greek ? (shift ? 0x03A0 : 0x03C0) : (shift ? 0x0421 : 0x0441);
+            }
+            return super.get(keyCode, metaState);
+        }
+    }
+
+    @Test
+    @Config(shadows = AlternateCharacterMap.class)
+    public void alternateBaseLayoutFieldsPreserveTheInitialReleaseIdentity() throws Exception {
+        AlternateCharacterMap.greek = false;
+        enter("\033[>7u");
+        int modifiers = KeyEvent.META_CTRL_ON | KeyEvent.META_SHIFT_ON;
+        try {
+            press(KeyEvent.KEYCODE_C, modifiers, "\033[1089:1057:99;6u");
+            AlternateCharacterMap.greek = true;
+            repeat(KeyEvent.KEYCODE_C, modifiers, "\033[960:928:99;6:2u");
+            release(KeyEvent.KEYCODE_C, KeyEvent.META_CTRL_ON, "\033[1089::99;5:3u");
+            press(KeyEvent.KEYCODE_C, KeyEvent.META_CTRL_ON, "\033[960::99;5u");
+            release(KeyEvent.KEYCODE_C, 0, "\033[960::99;1:3u");
+        } finally {
+            AlternateCharacterMap.greek = false;
+        }
+    }
+
+    @Test
+    @Config(shadows = AlternateCharacterMap.class)
+    public void alternateOnlyFlagDoesNotChangeLegacyTextOrShortcuts() throws Exception {
+        AlternateCharacterMap.greek = false;
+        for (int flags : new int[]{0, 4}) {
+            enter("\033[=" + flags + "u");
+            press(KeyEvent.KEYCODE_C, KeyEvent.META_META_ON, "\u03bb");
+            press(KeyEvent.KEYCODE_I, KeyEvent.META_CTRL_ON, "\t");
+            repeat(KeyEvent.KEYCODE_I, KeyEvent.META_CTRL_ON, "\t");
+            release(KeyEvent.KEYCODE_I, KeyEvent.META_CTRL_ON, "");
+            press(KeyEvent.KEYCODE_ESCAPE, 0, "\033");
+        }
+    }
+
+    @Test
+    @Config(shadows = AltGrCharacterMap.class)
+    public void alternateReportingRetainsAltGrTextAndBaseKey() throws Exception {
+        enter("\033[>7u");
+        int altGr = KeyEvent.META_ALT_ON | KeyEvent.META_ALT_RIGHT_ON;
+        press(KeyEvent.KEYCODE_SPACE, altGr, "\u00a0");
+        release(KeyEvent.KEYCODE_SPACE, altGr, "");
+        press(KeyEvent.KEYCODE_E, altGr | KeyEvent.META_CTRL_ON, "\033[8364::101;5u");
+        release(KeyEvent.KEYCODE_E, altGr, "\033[8364::101;1:3u");
+    }
+
+    @Test
+    public void alternateFlagCombinationsKeepTextAndModeRestoration() throws Exception {
+        int modifiers = KeyEvent.META_CTRL_ON | KeyEvent.META_SHIFT_ON;
+        for (int flags = 0; flags < 8; flags++) {
+            enter("\033[=" + flags + "u");
+            press(KeyEvent.KEYCODE_A, KeyEvent.META_SHIFT_ON, "A");
+            boolean disambiguate = (flags & 1) != 0, events = (flags & 2) != 0, alternate = (flags & 4) != 0;
+            String key = alternate ? "97:65" : "97";
+            press(KeyEvent.KEYCODE_A, modifiers, disambiguate ? "\033[" + key + ";6u" : "\u0001");
+            repeat(KeyEvent.KEYCODE_A, modifiers, events ? "\033[" + key + ";6:2u" :
+                disambiguate ? "\033[" + key + ";6u" : "\u0001");
+            release(KeyEvent.KEYCODE_A, modifiers, events ? "\033[" + key + ";6:3u" : "");
+        }
+        enter("\033[>0u");
+        press(KeyEvent.KEYCODE_A, modifiers, "\u0001");
+        enter("\033[<u");
+        press(KeyEvent.KEYCODE_A, modifiers, "\033[97:65;6u");
+    }
+
+    @Test
+    @Config(shadows = AlternateCharacterMap.class)
+    public void softInputAndUnknownKeysDoNotInventBaseLayoutIdentity() throws Exception {
+        AlternateCharacterMap.greek = false;
+        enter("\033[>7u");
+        mView.inputCodePoint(TerminalView.KEY_EVENT_SOURCE_SOFT_KEYBOARD, 'a', true, false);
+        assertEquals("\033[97;5u", drainInput());
+        mView.inputCodePoint(TerminalView.KEY_EVENT_SOURCE_SOFT_KEYBOARD, 0x4E2D, false, false);
+        assertEquals("中", drainInput());
+        KeyEvent soft = new KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_C, 0,
+            KeyEvent.META_CTRL_ON | KeyEvent.META_SHIFT_ON, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
+            KeyEvent.FLAG_SOFT_KEYBOARD);
+        assertTrue(mView.onKeyDown(KeyEvent.KEYCODE_C, soft));
+        assertEquals("\033[1089:1057;6u", drainInput());
+    }
+
+    @Test
+    @Config(shadows = AlternateCharacterMap.class)
+    public void shiftedAlternateIsNotAssumedToBeUppercase() throws Exception {
+        enter("\033[>5u");
+        press(KeyEvent.KEYCODE_D, KeyEvent.META_CTRL_ON | KeyEvent.META_SHIFT_ON, "\033[97:33:100;6u");
+    }
+
 }

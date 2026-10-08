@@ -22,9 +22,9 @@ public class KittyKeyboardTest extends TerminalTestCase {
     public void testSupportedFlagsAndSetModes() {
         withTerminalSized(20, 4);
         enterString("\033[=31u");
-        assertEnteringStringGivesResponse("\033[?u", "\033[?3u");
+        assertEnteringStringGivesResponse("\033[?u", "\033[?7u");
         enterString("\033[=1;3u");
-        assertEnteringStringGivesResponse("\033[?u", "\033[?2u");
+        assertEnteringStringGivesResponse("\033[?u", "\033[?6u");
         enterString("\033[=1;2u\033[=30;2u");
         assertTrue(mTerminal.isKittyKeyboardEnabled());
         enterString("\033[=0;1u");
@@ -121,6 +121,61 @@ public class KittyKeyboardTest extends TerminalTestCase {
         assertNull(KeyHandler.getCode(KeyEvent.KEYCODE_NUMPAD_0,
             KeyHandler.KEYMOD_NUM_LOCK, false, false, 2, 3));
         assertNull(KeyHandler.getCode(KeyEvent.KEYCODE_DPAD_UP, 0, false, false, 1, 3));
+    }
+
+    public void testAlternateFlagCombinationsAndRestoration() {
+        withTerminalSized(20, 4);
+        for (int flags = 0; flags <= 31; flags++) {
+            enterString("\033[=" + flags + "u");
+            assertEnteringStringGivesResponse("\033[?u", "\033[?" + (flags & 7) + "u");
+            assertEquals((flags & 3) != 0, mTerminal.isKittyKeyboardEnabled());
+        }
+        enterString("\033[=4u\033[>7u\033[<u");
+        assertEnteringStringGivesResponse("\033[?u", "\033[?4u");
+        enterString("\033[=1;2u\033[=2;2u\033[=4;3u");
+        assertEnteringStringGivesResponse("\033[?u", "\033[?3u");
+        enterString("\033[>5u\033[?1049h");
+        assertEnteringStringGivesResponse("\033[?u", "\033[?0u");
+        enterString("\033[>6u\033[?1049l");
+        assertEnteringStringGivesResponse("\033[?u", "\033[?5u");
+        enterString("\033c\033[?1049h");
+        assertEnteringStringGivesResponse("\033[?u", "\033[?0u");
+    }
+
+    public void testAlternateCodePointFields() {
+        KeyHandler.KittyKey equals = new KeyHandler.KittyKey('=', '+', '=');
+        int modifiers = KeyHandler.KEYMOD_CTRL | KeyHandler.KEYMOD_SHIFT;
+        assertEquals("\033[61:43;6u", KeyHandler.getKittyCodePoint(equals, modifiers, 5, 1));
+        assertEquals("\033[61:43;6:2u", KeyHandler.getKittyCodePoint(equals, modifiers, 7, 2));
+        assertEquals("\033[61;5:3u", KeyHandler.getKittyCodePoint(equals, KeyHandler.KEYMOD_CTRL, 7, 3));
+        assertEquals("\033[61;6u", KeyHandler.getKittyCodePoint(equals, modifiers, 3, 1));
+        assertNull(KeyHandler.getKittyCodePoint(equals, modifiers, 4, 1));
+        assertNull(KeyHandler.getKittyCodePoint(equals, modifiers, 6, 1));
+        assertEquals("\033[61:43;6:2u", KeyHandler.getKittyCodePoint(equals, modifiers, 6, 2));
+        assertNull(KeyHandler.getKittyCodePoint(equals, modifiers, 5, 3));
+        assertNull(KeyHandler.getKittyCodePoint(equals, KeyHandler.KEYMOD_SHIFT, 7, 1));
+        KeyHandler.KittyKey cyrillic = new KeyHandler.KittyKey(1089, 1057, 'c');
+        assertEquals("\033[1089:1057:99;6u", KeyHandler.getKittyCodePoint(cyrillic, modifiers, 5, 1));
+        assertEquals("\033[1089::99;5u", KeyHandler.getKittyCodePoint(cyrillic, KeyHandler.KEYMOD_CTRL, 5, 1));
+        assertEquals("\033[1089::99;1:3u", KeyHandler.getKittyCodePoint(cyrillic, 0, 7, 3));
+        KeyHandler.KittyKey unknown = new KeyHandler.KittyKey('a', 0xD800, 0x80000000);
+        assertEquals("\033[97;6u", KeyHandler.getKittyCodePoint(unknown, modifiers, 5, 1));
+        KeyHandler.KittyKey supplementary = new KeyHandler.KittyKey(0x1F600, 0x1F601, 'a');
+        assertEquals("\033[128512:128513:97;6u", KeyHandler.getKittyCodePoint(supplementary, modifiers, 5, 1));
+    }
+
+    public void testBaseLayoutMappingAndFunctionalKeyBoundaries() {
+        for (int key = KeyEvent.KEYCODE_A; key <= KeyEvent.KEYCODE_Z; key++)
+            assertEquals('a' + key - KeyEvent.KEYCODE_A, KeyHandler.getKittyBaseLayoutCodePoint(key));
+        for (int key = KeyEvent.KEYCODE_0; key <= KeyEvent.KEYCODE_9; key++)
+            assertEquals('0' + key - KeyEvent.KEYCODE_0, KeyHandler.getKittyBaseLayoutCodePoint(key));
+        assertEquals('=', KeyHandler.getKittyBaseLayoutCodePoint(KeyEvent.KEYCODE_EQUALS));
+        assertEquals('\\', KeyHandler.getKittyBaseLayoutCodePoint(KeyEvent.KEYCODE_BACKSLASH));
+        assertEquals(0, KeyHandler.getKittyBaseLayoutCodePoint(KeyEvent.KEYCODE_UNKNOWN));
+        assertEquals(0, KeyHandler.getKittyBaseLayoutCodePoint(KeyEvent.KEYCODE_PLUS));
+        assertEquals(0, KeyHandler.getKittyBaseLayoutCodePoint(KeyEvent.KEYCODE_NUMPAD_0));
+        assertEquals("\033[13;2:2~", KeyHandler.getCode(KeyEvent.KEYCODE_F3, KeyHandler.KEYMOD_SHIFT, false, false, 7, 2));
+        assertEquals("\r", KeyHandler.getCode(KeyEvent.KEYCODE_ENTER, 0, false, false, 7, 2));
     }
 
 }

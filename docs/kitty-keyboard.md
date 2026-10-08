@@ -1,8 +1,8 @@
 # Kitty keyboard protocol support
 
-The terminal supports disambiguate escape codes (flag `1`) and report event
-types (flag `2`). It does not implement alternate key codes, reporting all keys,
-or associated text. Unsupported flags are ignored and are never reported
+The terminal supports disambiguate escape codes (flag `1`), report event
+types (flag `2`) and report alternate keys (flag `4`). It does not implement
+reporting all keys or associated text. Unsupported flags are ignored and are never reported
 as enabled by a query.
 
 Applications negotiate support using `CSI ? u`, enable it using `CSI > 1 u`, and
@@ -85,7 +85,84 @@ the current physical modifiers, including when Ctrl, Shift or Num Lock changes
 before the key is released. Virtual modifiers used for the original shortcut
 are retained for its release.
 
+## Alternate key codes
+
+Flag `4` enhances an existing encoded key event with optional shifted and
+standard PC-101 layout code points. Enable it with disambiguation using
+`CSI > 5 u`, or with disambiguation and events using `CSI > 7 u`.
+It can be added using `CSI = 4 ; 2 u` and removed using `CSI = 4 ; 3 u`.
+Queries report supported combinations `0` through `7`; flags `8` and `16`
+remain unsupported. Flag `4` alone is queryable but keeps legacy input.
+
+The key field is `primary:shifted:base`. The primary stays the active layout's
+unshifted character. The shifted value is resolved through Android's current
+layout, not by assuming uppercase, and is included only when Shift is active.
+The base value uses known Android letter, digit, Space and punctuation key codes
+to identify their standard PC-101 equivalents. Unknown and extended positions
+are omitted. Values identical to the primary are redundant and omitted.
+A base-only alternate keeps an empty shifted subfield: `primary::base`.
+
+Examples on layouts with the indicated characters:
+
+| Input and flags | Bytes |
+| --- | --- |
+| Ctrl+Shift+A, flags `5` | `ESC [ 97 : 65 ; 6 u` |
+| Ctrl+Shift+= producing `+`, flags `5` | `ESC [ 61 : 43 ; 6 u` |
+| Same key repeated, flags `7` | `ESC [ 61 : 43 ; 6 : 2 u` |
+| Cyrillic `с` on the C position, Ctrl, flags `5` | `ESC [ 1089 : : 99 ; 5 u` |
+| Cyrillic `с` on C, Ctrl+Shift, flags `5` | `ESC [ 1089 : 1057 : 99 ; 6 u` |
+| Plain Shift+A, flags `7` | UTF-8 `A` |
+
+Presses retain an immutable layout identity for matching releases. A release
+uses the initial primary/base identity and the current modifier state; if Shift
+has been released, its shifted subfield is omitted. Functional-key sequences
+retain their dedicated identities and never acquire printable alternates.
+
+IME commits and virtual shortcuts supply no physical identity and do not invent
+base or shifted fields. Soft-keyboard flagged KeyEvents can report a known
+layout-shifted character, but omit the physical base. Dead-key composition
+fallbacks also omit unavailable alternates. Right Alt/AltGr remains part of
+layout text resolution, and plain text keeps its UTF-8 path without flag `8`.
+The base mapping assumes standard Android key-code assignments; custom firmware
+or key-layout remapping needs separate validation.
+
 ## Validation status
+
+### Alternate keys (2026-10-09)
+
+- The complete upstream `./gradlew test` task passed with 155 terminal-emulator
+  and 35 app tests per Debug/Release variant: 380 executions, zero failures,
+  errors or skips. Three terminal and seven Android input tests were added.
+- Negotiation covers every supported flag combination, unsupported masks,
+  set/add/remove, stack restoration, separate screens and reset. Encoding
+  covers shifted punctuation, base-only/non-Latin fields, supplementary Unicode,
+  omitted invalid/duplicate alternatives, functional and recovery boundaries.
+- Robolectric fixtures exercise Cyrillic and changed Greek layouts, a shifted
+  character that is not uppercase, release identity after layout/modifier
+  changes, AltGr, soft input, and alternate-only legacy isolation. These are
+  synthetic layout fixtures, not physical non-Latin keyboard coverage. The
+  Robolectric 4.10 map lacks Shift+=; that US entry is supplied explicitly.
+- Debug APK assembly succeeded for the four ABIs and universal package.
+  Toolchain retained: Temurin 21.0.12.1, Gradle 9.2.1, Android API 36,
+  Build Tools 36.0.0, NDK 29.0.14206865. The upstream CI currently uses Temurin
+  17; this local run used the retained compatible JDK 21.
+- Reproduce and retain the source snapshot, all unit-test XML, log, versioned
+  APKs and checksums with the [validation runner](../tools/kitty-keyboard/README.md).
+  This entry point was run successfully, retaining five uniquely versioned APKs
+  and all 380 Debug/Release test results.
+- On the Android 16 arm64 PTP-AN10, all 125 new native PTY checks passed against
+  installed version `0.118.0+kitty.59c2f1ea.10429391625c`. See
+  [the alternate-key device report](kitty-keyboard-alternate-device-validation.json).
+  It includes all flags `0` through `7`, shifted A and punctuation, dropping the
+  shifted subfield after Shift release, and earlier event/text/recovery cases.
+- Of these, 122 checks use Android's real virtual keyboard mapping and three
+  override Unicode values in a synthetic KeyEvent layout fixture. All input was
+  delivered directly to production `TerminalView`, not through OS dispatch or
+  physical HID. The three fixture checks cover Cyrillic primary/shifted/base,
+  base-only fields and soft-keyboard base suppression across a real native PTY.
+  No new flag `4` physical layout, real IME, SSH or multiplexer verification is
+  claimed; the historical reports below still validate their original flags.
+
 
 ### Event reporting (2026-10-08)
 
