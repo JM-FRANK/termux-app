@@ -97,6 +97,8 @@ remain unsupported. Flag `4` alone is queryable but keeps legacy input.
 The key field is `primary:shifted:base`. The primary stays the active layout's
 unshifted character. The shifted value is resolved through Android's current
 layout, not by assuming uppercase, and is included only when Shift is active.
+Physical left/right Shift states are retained for side-specific layout mappings,
+including right Shift with AltGr. Virtual Shift retains its left-Shift default.
 The base value uses known Android letter, digit, Space and punctuation key codes
 to identify their standard PC-101 equivalents. Unknown and extended positions
 are omitted. Values identical to the primary are redundant and omitted.
@@ -127,6 +129,25 @@ The base mapping assumes standard Android key-code assignments; custom firmware
 or key-layout remapping needs separate validation.
 
 ## Validation status
+
+### Alternate-key review fixes (2026-10-09)
+
+- Preserve actual left/right Shift states when resolving the shifted alternate;
+  a physical right Shift no longer gains an artificial left-Shift bit. Four
+  new Android regressions cover generic/left/right/both Shift, repeats and
+  releases, right Shift with AltGr, ordinary text and virtual Shift's existing
+  default. These side-specific layouts are test fixtures, not hardware layouts.
+- Archive raw Gradle test directories before parsing their XML. Damaged reports
+  are retained and recorded in `test_result_errors`, other valid suites are
+  still summarized, and the runner reports failure. Three isolated tool checks
+  include an end-to-end simulated Gradle failure with truncated XML.
+- All 388 Debug/Release Gradle test executions passed (155 emulator and 39 app
+  tests per variant), along with the three validation-tool checks; five Debug
+  APKs were rebuilt and retained. Version: `0.118.0+kitty.817dfb43.edcdab58162c`.
+- All 138 native PTY checks passed on Android 16 PTP-AN10: the previous 125
+  cases plus 13 new Shift-side fixtures. The 13 new cases are synthetic layout
+  fixtures delivered as framework events, not physical keyboard layouts. See
+  [the review-fix report](kitty-keyboard-alternate-review-validation.json).
 
 ### Alternate keys (2026-10-09)
 

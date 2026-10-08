@@ -13,6 +13,38 @@ import sys
 import xml.etree.ElementTree as ET
 
 
+
+def archive_test_results(repo, output):
+    """Copy raw evidence before parsing; one damaged report must not discard other results."""
+    suites, errors = {}, []
+    fields = ("tests", "failures", "errors", "skipped")
+    for module in ("terminal-emulator", "terminal-view", "termux-shared", "app"):
+        for directory in sorted((repo / module / "build/test-results").glob("test*UnitTest")):
+            destination = output / "test-results" / module / directory.name
+            try:
+                shutil.copytree(directory, destination)
+            except OSError as error:
+                errors.append({"path": str(directory.relative_to(repo)), "error": str(error)})
+                continue
+            summaries = []
+            for path in sorted(destination.glob("TEST-*.xml")):
+                try:
+                    root = ET.parse(path).getroot()
+                    if root.tag != "testsuite":
+                        raise ValueError("Expected a Gradle testsuite report")
+                    summary = {field: int(root.get(field, 0)) for field in fields}
+                    if any(value < 0 for value in summary.values()):
+                        raise ValueError("Test counts must not be negative")
+                    summaries.append(summary)
+                except (ET.ParseError, OSError, ValueError) as error:
+                    errors.append({"path": str(path.relative_to(output)), "error": str(error)})
+            if summaries:
+                suites[module + ":" + directory.name] = {
+                    field: sum(summary[field] for summary in summaries) for field in fields
+                }
+    return suites, errors
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True, type=Path,
@@ -61,17 +93,7 @@ def main():
     with (output / "gradle.log").open("w") as log:
         result = subprocess.run(command, cwd=repo, env=env, stdout=log, stderr=subprocess.STDOUT)
 
-    suites = {}
-    for module in ("terminal-emulator", "terminal-view", "termux-shared", "app"):
-        for directory in sorted((repo / module / "build/test-results").glob("test*UnitTest")):
-            roots = [ET.parse(path).getroot() for path in directory.glob("TEST-*.xml")]
-            if not roots:
-                continue
-            suites[module + ":" + directory.name] = {
-                field: sum(int(root.get(field, 0)) for root in roots)
-                for field in ("tests", "failures", "errors", "skipped")
-            }
-            shutil.copytree(directory, output / "test-results" / module / directory.name)
+    suites, test_result_errors = archive_test_results(repo, output)
     checksums = {}
     # Copy only this invocation's APK names, not stale APKs from earlier builds.
     for abi in ("universal", "arm64-v8a", "armeabi-v7a", "x86_64", "x86"):
@@ -83,6 +105,7 @@ def main():
     report = {
         "base_commit": base, "source_snapshot_sha256": snapshot, "apk_version": version,
         "command": command, "gradle_exit_code": result.returncode, "unit_tests": suites,
+        "test_result_errors": test_result_errors,
         "apks": checksums, "diff_check_exit_code": diff_check.returncode,
         "device_validation": "Not run by this script; record actual device evidence separately",
         "toolchain": {key: os.environ.get(key) for key in
@@ -93,7 +116,9 @@ def main():
     print(json.dumps(report, indent=2))
     if result.returncode:
         return result.returncode
-    if diff_check.returncode or len(checksums) != 5 or not suites:
+    if diff_check.returncode or len(checksums) != 5 or test_result_errors or not any(
+        summary["tests"] for summary in suites.values()
+    ):
         return 1
     return 0
 

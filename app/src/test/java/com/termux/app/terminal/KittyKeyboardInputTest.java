@@ -569,4 +569,79 @@ public class KittyKeyboardInputTest {
         press(KeyEvent.KEYCODE_D, KeyEvent.META_CTRL_ON | KeyEvent.META_SHIFT_ON, "\033[97:33:100;6u");
     }
 
+    /** Distinct generic, left, right, both and right-Shift+AltGr mappings. */
+    @Implements(KeyCharacterMap.class)
+    public static class SideShiftCharacterMap extends ShadowKeyCharacterMap {
+        @Override
+        @Implementation
+        protected int get(int keyCode, int metaState) {
+            if (keyCode == KeyEvent.KEYCODE_EQUALS) {
+                boolean left = (metaState & KeyEvent.META_SHIFT_LEFT_ON) != 0;
+                boolean right = (metaState & KeyEvent.META_SHIFT_RIGHT_ON) != 0;
+                if ((metaState & KeyEvent.META_ALT_RIGHT_ON) != 0) return right ? 0x00D7 : 0x20AC;
+                if (left && right) return '^';
+                if (right) return '*';
+                if (left) return '#';
+                return (metaState & KeyEvent.META_SHIFT_ON) != 0 ? '+' : '=';
+            }
+            return super.get(keyCode, metaState);
+        }
+    }
+
+    @Test
+    @Config(shadows = SideShiftCharacterMap.class)
+    public void alternateShiftedCharactersRetainPhysicalShiftSides() throws Exception {
+        int[] sides = {KeyEvent.META_SHIFT_LEFT_ON, KeyEvent.META_SHIFT_RIGHT_ON,
+            KeyEvent.META_SHIFT_LEFT_ON | KeyEvent.META_SHIFT_RIGHT_ON, 0};
+        int[] codePoints = {'#', '*', '^', '+'};
+        for (int flags : new int[]{5, 7}) {
+            enter("\033[=" + flags + "u");
+            for (int i = 0; i < sides.length; i++) {
+                int modifiers = KeyEvent.META_CTRL_ON | KeyEvent.META_SHIFT_ON | sides[i];
+                String key = "\033[61:" + codePoints[i] + ";6";
+                press(KeyEvent.KEYCODE_EQUALS, modifiers, key + "u");
+                repeat(KeyEvent.KEYCODE_EQUALS, modifiers, key + (flags == 7 ? ":2u" : "u"));
+                release(KeyEvent.KEYCODE_EQUALS, modifiers, flags == 7 ? key + ":3u" : "");
+            }
+        }
+    }
+
+    @Test
+    @Config(shadows = SideShiftCharacterMap.class)
+    public void rightShiftAndAltGrResolveTheActualLayoutCombination() throws Exception {
+        enter("\033[>7u");
+        int modifiers = KeyEvent.META_CTRL_ON | KeyEvent.META_SHIFT_ON | KeyEvent.META_SHIFT_RIGHT_ON |
+            KeyEvent.META_ALT_ON | KeyEvent.META_ALT_RIGHT_ON;
+        press(KeyEvent.KEYCODE_EQUALS, modifiers, "\033[8364:215:61;6u");
+        repeat(KeyEvent.KEYCODE_EQUALS, modifiers, "\033[8364:215:61;6:2u");
+        release(KeyEvent.KEYCODE_EQUALS, modifiers, "\033[8364:215:61;6:3u");
+        press(KeyEvent.KEYCODE_EQUALS, modifiers, "\033[8364:215:61;6u");
+        release(KeyEvent.KEYCODE_EQUALS, KeyEvent.META_ALT_ON | KeyEvent.META_ALT_RIGHT_ON,
+            "\033[8364::61;1:3u");
+    }
+
+    @Test
+    @Config(shadows = SideShiftCharacterMap.class)
+    public void physicalRightShiftDoesNotGainAnArtificialLeftShift() throws Exception {
+        for (int flags : new int[]{0, 4, 7}) {
+            enter("\033[=" + flags + "u");
+            press(KeyEvent.KEYCODE_EQUALS, KeyEvent.META_SHIFT_ON | KeyEvent.META_SHIFT_RIGHT_ON, "*");
+            release(KeyEvent.KEYCODE_EQUALS, 0, "");
+        }
+    }
+
+    @Test
+    @Config(shadows = SideShiftCharacterMap.class)
+    public void virtualShiftKeepsItsExistingLeftShiftLayoutBehavior() throws Exception {
+        enter("\033[>7u");
+        mView.setTerminalViewClient(new TermuxTerminalViewClientBase() {
+            @Override
+            public boolean readShiftKey() {
+                return true;
+            }
+        });
+        press(KeyEvent.KEYCODE_EQUALS, KeyEvent.META_CTRL_ON, "\033[61:35;6u");
+        release(KeyEvent.KEYCODE_EQUALS, KeyEvent.META_CTRL_ON, "\033[61:35;6:3u");
+    }
+
 }

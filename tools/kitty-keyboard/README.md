@@ -23,6 +23,19 @@ version, Gradle log, Debug/Release test XML, five versioned APKs, checksums and
 `validation.json`. This uses the default package variant; the official build CI
 also tests `apt-android-5` independently. A runner failure preserves its results;
 inspect `gradle.log` and the XML rather than treating old artifacts as a new pass.
+Raw test directories are archived before their XML is parsed. Damaged or invalid
+reports are listed in `validation.json` under `test_result_errors`; the remaining
+valid reports are summarized and the runner returns failure. A nonzero Gradle
+exit code is preserved even if some XML reports are unreadable.
+
+Exercise evidence-retention regressions without a Java toolchain or device:
+
+```sh
+python3 -B tools/kitty-keyboard/test_validate.py
+```
+
+These checks use temporary fixture repositories and a simulated failing Gradle
+command; they do not replace the actual app tests.
 
 Device acceptance remains a separate step. Record the installed APK version and
 hash, negotiation flags, expected and actual PTY bytes, event source and cleanup.

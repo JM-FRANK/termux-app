@@ -873,7 +873,11 @@ public final class TerminalView extends View {
         }
         int effectiveMetaState = event.getMetaState() & ~bitsToClear;
 
-        if (shiftDown) effectiveMetaState |= KeyEvent.META_SHIFT_ON | KeyEvent.META_SHIFT_LEFT_ON;
+        if (shiftDown) {
+            effectiveMetaState |= KeyEvent.META_SHIFT_ON;
+            // Virtual Shift keeps the existing left-Shift default; physical sides stay intact.
+            if (!event.isShiftPressed()) effectiveMetaState |= KeyEvent.META_SHIFT_LEFT_ON;
+        }
         if (mClient.readFnKey()) effectiveMetaState |= KeyEvent.META_FUNCTION_ON;
 
         int result = event.getUnicodeChar(effectiveMetaState);
@@ -907,7 +911,7 @@ public final class TerminalView extends View {
             if ((mEmulator.getKittyKeyboardFlags() & KeyHandler.KITTY_REPORT_ALTERNATE_KEYS) != 0 &&
                 oldCombiningAccent == 0 && unshiftedCodePoint > 0 &&
                 (event.getUnicodeChar(unshiftedMetaState) & KeyCharacterMap.COMBINING_ACCENT) == 0) {
-                if (shiftDown) shiftedCodePoint = event.getUnicodeChar(unshiftedMetaState | KeyEvent.META_SHIFT_ON);
+                if (shiftDown) shiftedCodePoint = event.getUnicodeChar(effectiveMetaState & ~KeyEvent.META_CAPS_LOCK_ON);
                 if (event.getAction() == KeyEvent.ACTION_DOWN &&
                     (event.getFlags() & KeyEvent.FLAG_SOFT_KEYBOARD) == 0)
                     baseLayoutCodePoint = KeyHandler.getKittyBaseLayoutCodePoint(keyCode);
